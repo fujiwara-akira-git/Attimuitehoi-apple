@@ -93,6 +93,11 @@ struct ContentView: View {
     @State private var fingerOffset: CGFloat = 0
     @State private var showConfetti = false
     private let tts = AVSpeechSynthesizer()
+    @State private var showTTSSettings = false
+    @State private var availableVoiceOptions: [String] = []
+    @State private var selectedVoiceIdentifier: String = ""
+    @State private var ttsRate: Double = 0.5
+    @State private var ttsPitch: Double = 1.0
 
     var body: some View {
         VStack(spacing: 20) {
@@ -205,8 +210,34 @@ struct ContentView: View {
             }
 
             Spacer()
+            // TTS settings
+            ttsSettingsView()
         }
         .padding()
+        .onAppear {
+            // populate available Japanese voice options (identifier:name)
+            let voices = AVSpeechSynthesisVoice.speechVoices()
+            let jaVoices = voices.filter { $0.language == "ja-JP" }
+            if jaVoices.isEmpty {
+                // fallback: include any voices with ja-JP or default
+                availableVoiceOptions = voices.map { "\($0.identifier)|\($0.name) (\($0.language))" }
+            } else {
+                availableVoiceOptions = jaVoices.map { "\($0.identifier)|\($0.name)" }
+            }
+            // pick a sensible default
+            if selectedVoiceIdentifier.isEmpty {
+                if let female = jaVoices.first(where: { v in
+                    let id = v.identifier.lowercased(); let name = v.name.lowercased()
+                    return id.contains("female") || name.contains("female") || id.contains("siri") || name.contains("yuka") || name.contains("yui") || name.contains("haru") || name.contains("kyoko")
+                }) {
+                    selectedVoiceIdentifier = female.identifier
+                } else if let first = jaVoices.first {
+                    selectedVoiceIdentifier = first.identifier
+                } else if let any = AVSpeechSynthesisVoice(language: "ja-JP") {
+                    selectedVoiceIdentifier = any.identifier
+                }
+            }
+        }
         .onChange(of: game.cpuDirection) { newDir in
             guard let d = newDir else { return }
             // rotate head toward direction
@@ -230,6 +261,48 @@ struct ContentView: View {
         }
     }
 
+    // TTS Settings UI: placed after main body logic so it's available in the view
+    @ViewBuilder
+    private func ttsSettingsView() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("TTS 設定を表示", isOn: $showTTSSettings)
+            if showTTSSettings {
+                GroupBox(label: Text("音声設定")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("声を選択:")
+                        Picker(selection: $selectedVoiceIdentifier, label: Text("Voice")) {
+                            ForEach(availableVoiceOptions, id: \.
+                                self) { entry in
+                                // entry format: identifier|name or identifier|name (lang)
+                                let parts = entry.split(separator: "|")
+                                let id = String(parts.first ?? "")
+                                let label = parts.count > 1 ? String(parts[1]) : id
+                                Text(label).tag(id)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+
+                        HStack {
+                            Text("速度")
+                            Slider(value: $ttsRate, in: 0.3...0.7, step: 0.01)
+                            Text(String(format: "%.2f", ttsRate))
+                                .frame(width: 48, alignment: .trailing)
+                        }
+
+                        HStack {
+                            Text("ピッチ")
+                            Slider(value: $ttsPitch, in: 0.5...2.0, step: 0.01)
+                            Text(String(format: "%.2f", ttsPitch))
+                                .frame(width: 48, alignment: .trailing)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+
     func performAfterPointing() {
         // speak short phrase and apply small delay to show head rotation
         speak("あっちむいてほい！")
@@ -248,21 +321,23 @@ struct ContentView: View {
     func speak(_ text: String) {
         let utterance = AVSpeechUtterance(string: text)
 
-        // Try to pick a female-sounding Japanese voice if available.
-        if let femaleVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { v in
-            // prefer Japanese voices
-            guard v.language == "ja-JP" else { return false }
-            let id = v.identifier.lowercased()
-            let name = v.name.lowercased()
-            // look for hints that indicate a female or Siri female voice
-            return id.contains("female") || name.contains("female") || id.contains("siri") && name.contains("siri") || name.contains("yuka") || name.contains("yui") || name.contains("haru") || name.contains("kyoko")
-        }) {
-            utterance.voice = femaleVoice
-        } else if let ja = AVSpeechSynthesisVoice(language: "ja-JP") {
-            utterance.voice = ja
+        // Use selected voice if available
+        if !selectedVoiceIdentifier.isEmpty {
+            if let voice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.identifier == selectedVoiceIdentifier }) {
+                utterance.voice = voice
+            } else if let voice = AVSpeechSynthesisVoice(language: "ja-JP") {
+                utterance.voice = voice
+            }
+        } else {
+            if let voice = AVSpeechSynthesisVoice(language: "ja-JP") {
+                utterance.voice = voice
+            }
         }
 
-        utterance.rate = 0.5
+        // Apply rate and pitch from UI
+        utterance.rate = Float(ttsRate)
+        utterance.pitchMultiplier = Float(ttsPitch)
+
         tts.stopSpeaking(at: .immediate)
         tts.speak(utterance)
     }
