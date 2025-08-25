@@ -22,6 +22,30 @@ CI
 
 ブランチ保護
 - リポジトリの `main` ブランチに保護ルールを適用するには、付属のスクリプトを使用してください: `scripts/branch_protect.sh`
+
+スクリプト使用例
+
+```bash
+# 簡易実行（対話あり）
+GITHUB_OWNER=fujiwara-akira-git GITHUB_REPO=Attimuitehoi-apple GITHUB_TOKEN=ghp_xxx ./scripts/branch_protect.sh
+
+# 複数リポジトリを一括（対話あり）
+GITHUB_OWNER=fujiwara-akira-git GITHUB_TOKEN=ghp_xxx ./scripts/branch_protect.sh -R "Attimuitehoi-apple,Attimuitehoi-web,Attimuitehoi-android"
+
+# 事前確認をスキップして実行
+GITHUB_OWNER=fujiwara-akira-git GITHUB_TOKEN=ghp_xxx ./scripts/branch_protect.sh -R "Attimuitehoi-apple" -y
+
+# Dry-run で確認
+GITHUB_OWNER=fujiwara-akira-git GITHUB_TOKEN=ghp_xxx ./scripts/branch_protect.sh -R "Attimuitehoi-web" -n
+```
+
+必要なトークン権限
+- 公開リポジトリ: `public_repo` スコープで十分
+- プライベートリポジトリ: `repo` スコープが必要
+
+備考
+- スクリプトは `jq` による整形出力を試みます。未インストール時は生の JSON を表示します（macOS: `brew install jq`）。
+
 # Attimuitehoi (あっちむいてほい) iOS
 
 このフォルダには、シンプルな SwiftUI ベースの iOS アプリ用ソースが含まれています。
