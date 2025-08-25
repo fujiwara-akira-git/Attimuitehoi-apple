@@ -1,3 +1,27 @@
+# Attimuitehoi (Apple)
+
+このリポジトリは `Attimuitehoi` の Apple 向けソース（iOS / macOS）です。
+
+- Swift / SwiftUI
+- Xcode プロジェクト: `Attimuitehoi.xcodeproj`
+- 推奨ブランチ: `main`
+
+使い方
+- Xcode で開いてビルド、またはコマンドラインでビルド:
+
+```bash
+# macOS 用ビルド (Debug)
+xcodebuild -project Attimuitehoi.xcodeproj -scheme "Attimuitehoi-mac" -configuration Debug -destination 'platform=macOS' clean build
+
+# iOS 用ビルド (Simulator)
+xcodebuild -project Attimuitehoi.xcodeproj -scheme "Attimuitehoi-iOS" -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 14' clean build
+```
+
+CI
+- `.github/workflows/ios.yml` で macOS ビルドを実行します。
+
+ブランチ保護
+- リポジトリの `main` ブランチに保護ルールを適用するには、付属のスクリプトを使用してください: `scripts/branch_protect.sh`
 # Attimuitehoi (あっちむいてほい) iOS
 
 このフォルダには、シンプルな SwiftUI ベースの iOS アプリ用ソースが含まれています。

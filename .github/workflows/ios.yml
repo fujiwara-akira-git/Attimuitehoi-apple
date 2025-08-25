@@ -1,0 +1,23 @@
+name: iOS/macOS Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          # Add any dependency installation if needed
+          echo "No extra dependencies"
+      - name: Build macOS target
+        run: |
+          xcodebuild -project Attimuitehoi.xcodeproj -scheme "Attimuitehoi-mac" -configuration Debug -destination 'platform=macOS' clean build
+      - name: Build iOS Simulator target
+        run: |
+          xcodebuild -project Attimuitehoi.xcodeproj -scheme "Attimuitehoi-iOS" -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 14' clean build
