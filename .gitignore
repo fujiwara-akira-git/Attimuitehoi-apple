@@ -7,3 +7,4 @@ DerivedData/
 Pods/
 *.xcuserstate
 *.xcuserdatad
+build/
