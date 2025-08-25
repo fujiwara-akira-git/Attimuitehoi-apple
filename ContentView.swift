@@ -247,7 +247,21 @@ struct ContentView: View {
 
     func speak(_ text: String) {
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP")
+
+        // Try to pick a female-sounding Japanese voice if available.
+        if let femaleVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { v in
+            // prefer Japanese voices
+            guard v.language == "ja-JP" else { return false }
+            let id = v.identifier.lowercased()
+            let name = v.name.lowercased()
+            // look for hints that indicate a female or Siri female voice
+            return id.contains("female") || name.contains("female") || id.contains("siri") && name.contains("siri") || name.contains("yuka") || name.contains("yui") || name.contains("haru") || name.contains("kyoko")
+        }) {
+            utterance.voice = femaleVoice
+        } else if let ja = AVSpeechSynthesisVoice(language: "ja-JP") {
+            utterance.voice = ja
+        }
+
         utterance.rate = 0.5
         tts.stopSpeaking(at: .immediate)
         tts.speak(utterance)
