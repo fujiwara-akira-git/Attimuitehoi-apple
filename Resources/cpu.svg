@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="skinGrad" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#ffe0d6"/>
+      <stop offset="100%" stop-color="#ffd1c4"/>
+    </linearGradient>
+    <linearGradient id="hairGrad" x1="0" x2="1">
+      <stop offset="0%" stop-color="#ff8fb2"/>
+      <stop offset="100%" stop-color="#ff6fa0"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(100,100)">
+    <ellipse cx="0" cy="30" rx="42" ry="50" fill="url(#skinGrad)"/>
+    <path d="M-52,-10 C-60,-50 60,-50 52,-10 C40,-20 20,-30 0,-34 C-20,-30 -40,-20 -52,-10 Z" fill="url(#hairGrad)"/>
+    <circle cx="0" cy="-8" r="26" fill="url(#skinGrad)" stroke="#f0b0c0" stroke-width="1"/>
+    <g id="eyes" transform="translate(-8,-12)">
+      <ellipse id="eye-left" cx="-12" cy="0" rx="6" ry="4" fill="#2b2b2b" />
+      <ellipse id="eye-right" cx="12" cy="0" rx="6" ry="4" fill="#2b2b2b" />
+      <rect id="eye-left-closed" x="-18" y="-3" width="12" height="6" fill="#2b2b2b" visibility="hidden" rx="3" />
+      <rect id="eye-right-closed" x="6" y="-3" width="12" height="6" fill="#2b2b2b" visibility="hidden" rx="3" />
+    </g>
+    <path d="M-6,6 C-3,10 3,10 6,6" stroke="#b24b62" stroke-width="1.6" fill="transparent" stroke-linecap="round"/>
+  </g>
+</svg>
