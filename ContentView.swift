@@ -98,6 +98,10 @@ struct ContentView: View {
     @State private var selectedVoiceIdentifier: String = ""
     @State private var ttsRate: Double = 0.5
     @State private var ttsPitch: Double = 1.0
+    // UserDefaults keys
+    private let kVoiceKey = "tts.selectedVoiceIdentifier"
+    private let kRateKey = "tts.rate"
+    private let kPitchKey = "tts.pitch"
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -237,7 +241,17 @@ struct ContentView: View {
             } else {
                 availableVoiceOptions = jaVoices.map { "\($0.identifier)|\($0.name)" }
             }
-            // pick a sensible default
+            // load persisted settings if any
+            let defaults = UserDefaults.standard
+            if let sv = defaults.string(forKey: kVoiceKey), !sv.isEmpty {
+                selectedVoiceIdentifier = sv
+            }
+            let savedRate = defaults.double(forKey: kRateKey)
+            if savedRate != 0 { ttsRate = savedRate }
+            let savedPitch = defaults.double(forKey: kPitchKey)
+            if savedPitch != 0 { ttsPitch = savedPitch }
+
+            // pick a sensible default if still empty
             if selectedVoiceIdentifier.isEmpty {
                 if let female = jaVoices.first(where: { v in
                     let id = v.identifier.lowercased(); let name = v.name.lowercased()
@@ -294,6 +308,9 @@ struct ContentView: View {
                             }
                         }
                         .pickerStyle(MenuPickerStyle())
+                        .onChange(of: selectedVoiceIdentifier) { new in
+                            UserDefaults.standard.set(new, forKey: kVoiceKey)
+                        }
 
                         HStack {
                             Text("速度")
@@ -301,12 +318,30 @@ struct ContentView: View {
                             Text(String(format: "%.2f", ttsRate))
                                 .frame(width: 48, alignment: .trailing)
                         }
+                        .onChange(of: ttsRate) { new in
+                            UserDefaults.standard.set(new, forKey: kRateKey)
+                        }
 
                         HStack {
                             Text("ピッチ")
                             Slider(value: $ttsPitch, in: 0.5...2.0, step: 0.01)
                             Text(String(format: "%.2f", ttsPitch))
                                 .frame(width: 48, alignment: .trailing)
+                        }
+                        .onChange(of: ttsPitch) { new in
+                            UserDefaults.standard.set(new, forKey: kPitchKey)
+                        }
+                        
+                        // Preview button
+                        HStack {
+                            Spacer()
+                            Button(action: {
+                                // sample preview text
+                                speak("こんにちは。これはプレビューです。声と速度を確認できます。")
+                            }) {
+                                Label("プレビュー再生", systemImage: "play.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
                     }
                     .padding(.vertical, 6)
