@@ -100,118 +100,131 @@ struct ContentView: View {
     @State private var ttsPitch: Double = 1.0
 
     var body: some View {
-        VStack(spacing: 20) {
-            Text(game.statusText)
-                .font(.title2)
-                .bold()
-                .multilineTextAlignment(.center)
-                .padding(.top)
+        HStack(alignment: .top, spacing: 20) {
+            // Left column: game UI
+            VStack(spacing: 20) {
+                Text(game.statusText)
+                    .font(.title2)
+                    .bold()
+                    .multilineTextAlignment(.center)
+                    .padding(.top)
 
-            HStack(alignment: .center, spacing: 40) {
-                VStack(spacing: 12) {
-                    Text("あなた")
-                        .font(.headline)
-                    Image(systemName: symbolForHand(game.playerHand))
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 80, height: 80)
-                        .foregroundStyle(.blue)
-                    Text(game.playerHand?.rawValue ?? "-")
-                }
+                HStack(alignment: .center, spacing: 40) {
+                    VStack(spacing: 12) {
+                        Text("あなた")
+                            .font(.headline)
+                        Image(systemName: symbolForHand(game.playerHand))
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 80, height: 80)
+                            .foregroundStyle(.blue)
+                        Text(game.playerHand?.rawValue ?? "-")
+                    }
 
-                VStack(spacing: 12) {
-                    Text("CPU")
-                        .font(.headline)
-                            ZStack {
-                                // Load local svg via simple WebView wrapper for vector display
-                                SVGWebView(name: "cpu", width: 120, height: 120, triggerWin: showConfetti)
-                                    .frame(width: 120, height: 120)
-                                    .rotationEffect(.degrees(headRotation), anchor: .center)
-                                    .animation(.interpolatingSpring(stiffness: 200, damping: 8), value: headRotation)
+                    VStack(spacing: 12) {
+                        Text("CPU")
+                            .font(.headline)
+                                ZStack {
+                                    // Load local svg via simple WebView wrapper for vector display
+                                    SVGWebView(name: "cpu", width: 120, height: 120, triggerWin: showConfetti)
+                                        .frame(width: 120, height: 120)
+                                        .rotationEffect(.degrees(headRotation), anchor: .center)
+                                        .animation(.interpolatingSpring(stiffness: 200, damping: 8), value: headRotation)
 
-                                // pointing finger indicator
-                                if game.phase != .janken {
-                                    Image(systemName: "hand.point.right.fill")
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(width: 36, height: 36)
-                                        .offset(x: fingerOffset)
-                                        .foregroundStyle(.red)
-                                        .animation(.easeInOut(duration: 0.25), value: fingerOffset)
+                                    // pointing finger indicator
+                                    if game.phase != .janken {
+                                        Image(systemName: "hand.point.right.fill")
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 36, height: 36)
+                                            .offset(x: fingerOffset)
+                                            .foregroundStyle(.red)
+                                            .animation(.easeInOut(duration: 0.25), value: fingerOffset)
+                                    }
                                 }
-                            }
-                    Text(game.cpuHand?.rawValue ?? "-")
+                        Text(game.cpuHand?.rawValue ?? "-")
+                    }
                 }
-            }
 
-            if game.phase == .janken {
-                HStack(spacing: 16) {
-                    ForEach(Janken.allCases) { hand in
-                        Button(action: {
-                            game.playJanken(player: hand)
-                            speak("じゃんけん\(hand.rawValue)！")
-                            // small animation
-                            withAnimation(.spring()) { fingerOffset = 0 }
-                        }) {
-                            VStack {
-                                Text(hand.rawValue)
-                                    .font(.title2)
-                                    .bold()
-                                Text(emojiForJanken(hand))
-                                    .font(.largeTitle)
+                if game.phase == .janken {
+                    HStack(spacing: 16) {
+                        ForEach(Janken.allCases) { hand in
+                            Button(action: {
+                                game.playJanken(player: hand)
+                                speak("じゃんけん\(hand.rawValue)！")
+                                // small animation
+                                withAnimation(.spring()) { fingerOffset = 0 }
+                            }) {
+                                VStack {
+                                    Text(hand.rawValue)
+                                        .font(.title2)
+                                        .bold()
+                                    Text(emojiForJanken(hand))
+                                        .font(.largeTitle)
+                                }
+                                .padding()
+                                .frame(minWidth: 90)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(12)
+                                .shadow(radius: 4)
                             }
-                            .padding()
-                            .frame(minWidth: 90)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(12)
-                            .shadow(radius: 4)
                         }
                     }
-                }
-            } else if game.phase == .pointing {
-                HStack(spacing: 24) {
-                    Button(action: {
-                        withAnimation { fingerOffset = -40 }
-                        game.chooseDirection(.left)
-                        performAfterPointing()
-                    }) {
-                        Text("← 左")
-                            .font(.title3)
-                            .padding()
-                            .frame(minWidth: 120)
-                            .background(Color.green.opacity(0.2))
-                            .cornerRadius(10)
+                } else if game.phase == .pointing {
+                    HStack(spacing: 24) {
+                        Button(action: {
+                            withAnimation { fingerOffset = -40 }
+                            game.chooseDirection(.left)
+                            performAfterPointing()
+                        }) {
+                            Text("← 左")
+                                .font(.title3)
+                                .padding()
+                                .frame(minWidth: 120)
+                                .background(Color.green.opacity(0.2))
+                                .cornerRadius(10)
+                        }
+                        Button(action: {
+                            withAnimation { fingerOffset = 40 }
+                            game.chooseDirection(.right)
+                            performAfterPointing()
+                        }) {
+                            Text("右 →")
+                                .font(.title3)
+                                .padding()
+                                .frame(minWidth: 120)
+                                .background(Color.green.opacity(0.2))
+                                .cornerRadius(10)
+                        }
                     }
-                    Button(action: {
-                        withAnimation { fingerOffset = 40 }
-                        game.chooseDirection(.right)
-                        performAfterPointing()
-                    }) {
-                        Text("右 →")
-                            .font(.title3)
-                            .padding()
-                            .frame(minWidth: 120)
-                            .background(Color.green.opacity(0.2))
-                            .cornerRadius(10)
+                } else {
+                    VStack(spacing: 12) {
+                        if game.statusText.contains("勝ち") { Text("🎉").font(.largeTitle) }
+                        Button("もう一度") {
+                            game.resetForNextRound()
+                            withAnimation { headRotation = 0; fingerOffset = 0; showConfetti = false }
+                            speak("じゃんけんをしてください")
+                        }
+                        .padding()
+                        .background(Color.orange.opacity(0.2))
+                        .cornerRadius(8)
                     }
                 }
-            } else {
-                VStack(spacing: 12) {
-                    if game.statusText.contains("勝ち") { Text("🎉").font(.largeTitle) }
-                    Button("もう一度") {
-                        game.resetForNextRound()
-                        withAnimation { headRotation = 0; fingerOffset = 0; showConfetti = false }
-                        speak("じゃんけんをしてください")
-                    }
-                    .padding()
-                    .background(Color.orange.opacity(0.2))
-                    .cornerRadius(8)
-                }
+
+                Spacer()
             }
 
-            Spacer()
-            // TTS settings
-            ttsSettingsView()
+            // Right column: settings panel
+            VStack(alignment: .leading, spacing: 12) {
+                Text("設定")
+                    .font(.headline)
+                ttsSettingsView()
+                Spacer()
+            }
+            .frame(width: 320)
+            .padding()
+            .background(Color(.secondarySystemBackground))
+            .cornerRadius(12)
         }
         .padding()
         .onAppear {
