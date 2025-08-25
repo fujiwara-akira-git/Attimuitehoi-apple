@@ -95,13 +95,10 @@ struct ContentView: View {
     private let tts = AVSpeechSynthesizer()
     @State private var showTTSSettings = false
     @State private var availableVoiceOptions: [String] = []
-    @State private var selectedVoiceIdentifier: String = ""
-    @State private var ttsRate: Double = 0.5
-    @State private var ttsPitch: Double = 1.0
-    // UserDefaults keys
-    private let kVoiceKey = "tts.selectedVoiceIdentifier"
-    private let kRateKey = "tts.rate"
-    private let kPitchKey = "tts.pitch"
+    @AppStorage("tts.selectedVoiceIdentifier") private var selectedVoiceIdentifier: String = ""
+    @AppStorage("tts.rate") private var ttsRate: Double = 0.5
+    @AppStorage("tts.pitch") private var ttsPitch: Double = 1.0
+    @AppStorage("tts.previewText") private var previewText: String = "こんにちは。これはプレビューです。声と速度を確認できます。"
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -241,16 +238,6 @@ struct ContentView: View {
             } else {
                 availableVoiceOptions = jaVoices.map { "\($0.identifier)|\($0.name)" }
             }
-            // load persisted settings if any
-            let defaults = UserDefaults.standard
-            if let sv = defaults.string(forKey: kVoiceKey), !sv.isEmpty {
-                selectedVoiceIdentifier = sv
-            }
-            let savedRate = defaults.double(forKey: kRateKey)
-            if savedRate != 0 { ttsRate = savedRate }
-            let savedPitch = defaults.double(forKey: kPitchKey)
-            if savedPitch != 0 { ttsPitch = savedPitch }
-
             // pick a sensible default if still empty
             if selectedVoiceIdentifier.isEmpty {
                 if let female = jaVoices.first(where: { v in
@@ -308,18 +295,12 @@ struct ContentView: View {
                             }
                         }
                         .pickerStyle(MenuPickerStyle())
-                        .onChange(of: selectedVoiceIdentifier) { new in
-                            UserDefaults.standard.set(new, forKey: kVoiceKey)
-                        }
 
                         HStack {
                             Text("速度")
                             Slider(value: $ttsRate, in: 0.3...0.7, step: 0.01)
                             Text(String(format: "%.2f", ttsRate))
                                 .frame(width: 48, alignment: .trailing)
-                        }
-                        .onChange(of: ttsRate) { new in
-                            UserDefaults.standard.set(new, forKey: kRateKey)
                         }
 
                         HStack {
@@ -328,16 +309,19 @@ struct ContentView: View {
                             Text(String(format: "%.2f", ttsPitch))
                                 .frame(width: 48, alignment: .trailing)
                         }
-                        .onChange(of: ttsPitch) { new in
-                            UserDefaults.standard.set(new, forKey: kPitchKey)
+
+                        // Editable preview text
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("プレビューテキスト")
+                            TextField("プレビュー文を入力", text: $previewText)
+                                .textFieldStyle(.roundedBorder)
                         }
-                        
+
                         // Preview button
                         HStack {
                             Spacer()
                             Button(action: {
-                                // sample preview text
-                                speak("こんにちは。これはプレビューです。声と速度を確認できます。")
+                                speak(previewText)
                             }) {
                                 Label("プレビュー再生", systemImage: "play.fill")
                             }
