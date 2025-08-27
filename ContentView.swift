@@ -187,7 +187,7 @@ struct ContentView: View {
             synthesizer.speak(u)
         }
 
-        func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
             DispatchQueue.main.asyncAfter(deadline: .now() + gap) { [weak self] in
                 self?.speakNext()
             }
