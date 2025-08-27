@@ -1,6 +1,10 @@
 import SwiftUI
 import AVFoundation
+import WebKit
 
+#if os(macOS)
+import AppKit
+#endif
 enum Janken: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
     case gu = "グー"
@@ -11,6 +15,8 @@ enum Janken: String, CaseIterable, Identifiable {
 enum Direction: String, CaseIterable {
     case left = "左"
     case right = "右"
+    case up = "上"
+    case down = "下"
 }
 
 final class GameLogic: ObservableObject {
@@ -19,265 +25,375 @@ final class GameLogic: ObservableObject {
     @Published var cpuHand: Janken? = nil
     @Published var playerDirection: Direction? = nil
     @Published var cpuDirection: Direction? = nil
+    // Preselected CPU direction decided after janken but not revealed until the player points
+    private var preselectedCpuDirection: Direction? = nil
     @Published var phase: Phase = .janken
+    // Prevent double-choices / button mashing
+    @Published var isLocked: Bool = false
+    // Cumulative scores
+    @Published var playerScore: Int = 0
+    @Published var cpuScore: Int = 0
 
-    enum Phase {
-        case janken
-        case pointing
-        case deciding
-    }
+    enum Phase { case janken, pointing, deciding }
+
+    enum JankenWinner { case player, cpu }
+    // Remember who won the last janken to decide who is pointing
+    private var lastJankenWinner: JankenWinner? = nil
 
     func playJanken(player: Janken) {
+        guard !isLocked else { return }
+        isLocked = true
+
+        // Determine both choices together to avoid any ordering/after-the-fact change
+        let cpu = Janken.allCases.randomElement()!
         playerHand = player
-        cpuHand = Janken.allCases.randomElement()!
+        cpuHand = cpu
 
         if playerHand == cpuHand {
             statusText = "あいこ！もう一度"
+            isLocked = false
+            phase = .janken
             return
         }
 
         let playerWins = (playerHand == .gu && cpuHand == .choki) || (playerHand == .choki && cpuHand == .pa) || (playerHand == .pa && cpuHand == .gu)
+        // Decide who will be the pointer in the upcoming あっちむいてほい round.
+        statusText = playerWins ? "あなたが指差す番です。指して！" : "CPUが指差す番です。首を向けて！"
+        lastJankenWinner = playerWins ? .player : .cpu
 
-        if playerWins {
-            statusText = "あなたの勝ち！指して！"
-        } else {
-            statusText = "CPUの勝ち。首を向けて！"
+        // Preselect CPU pointing direction now, but do not publish it yet.
+        preselectedCpuDirection = Direction.allCases.randomElement()!
+        cpuDirection = nil
+
+        // Wait a moment after the janken result before showing the pointing phase
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self = self else { return }
+            self.phase = .pointing
+            // speak will be triggered by the view's onChange(of: phase)
+            self.isLocked = false
         }
-        phase = .pointing
     }
 
     func chooseDirection(_ dir: Direction) {
-        guard phase == .pointing else { return }
+        guard !isLocked else { return }
+        isLocked = true
+
+        // Reveal CPU direction using the preselection if present
+        let cpu = preselectedCpuDirection ?? Direction.allCases.randomElement()!
         playerDirection = dir
-        cpuDirection = Direction.allCases.randomElement()!
+        self.cpuDirection = cpu
+        self.preselectedCpuDirection = nil
 
-        if playerWinsLastJanken() {
-            if playerDirection == cpuDirection {
-                statusText = "あなたの勝ち！"
+        // Delay the scoring so animations and chant can complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self = self else { return }
+
+            if let winner = self.lastJankenWinner {
+                switch winner {
+                case .player:
+                    if self.playerDirection == self.cpuDirection {
+                        self.playerScore += 1
+                        self.statusText = "あなたの勝ち！"
+                    } else {
+                        self.statusText = "勝負はつかなかった..."
+                    }
+                case .cpu:
+                    if self.playerDirection == self.cpuDirection {
+                        self.cpuScore += 1
+                        self.statusText = "あなたの負け..."
+                    } else {
+                        self.statusText = "勝負はつかなかった..."
+                    }
+                }
             } else {
-                statusText = "はずれ。じゃんけんに戻ります"
-                resetForNextRound()
-                return
+                if self.playerDirection == self.cpuDirection {
+                    self.playerScore += 1
+                    self.statusText = "あなたの勝ち！"
+                } else {
+                    self.statusText = "勝負はつかなかった..."
+                }
             }
-        } else {
-            if playerDirection == cpuDirection {
-                statusText = "あなたの負け！"
-            } else {
-                statusText = "はずれ。じゃんけんに戻ります"
-                resetForNextRound()
-                return
-            }
+
+            self.lastJankenWinner = nil
+            self.phase = .deciding
+            self.isLocked = false
         }
-
-        phase = .deciding
-    }
-
-    func playerWinsLastJanken() -> Bool {
-        guard let p = playerHand, let c = cpuHand else { return false }
-        return (p == .gu && c == .choki) || (p == .choki && c == .pa) || (p == .pa && c == .gu)
     }
 
     func resetForNextRound() {
-        playerHand = nil
-        cpuHand = nil
-        playerDirection = nil
-        cpuDirection = nil
-        phase = .janken
-        statusText = "じゃんけんをしてください"
+        playerHand = nil; cpuHand = nil; playerDirection = nil; cpuDirection = nil; preselectedCpuDirection = nil; phase = .janken; statusText = "じゃんけんをしてください"
+    }
+
+    func resetScores() {
+        playerScore = 0
+        cpuScore = 0
     }
 }
 
 struct ContentView: View {
     @StateObject private var game = GameLogic()
     @State private var headRotation: Double = 0
-    @State private var fingerOffset: CGFloat = 0
-    @State private var showConfetti = false
-    private let tts = AVSpeechSynthesizer()
-    @State private var showTTSSettings = false
-    @State private var availableVoiceOptions: [String] = []
-    @AppStorage("tts.selectedVoiceIdentifier") private var selectedVoiceIdentifier: String = ""
-    @AppStorage("tts.rate") private var ttsRate: Double = 0.5
-    @AppStorage("tts.pitch") private var ttsPitch: Double = 1.0
-    @AppStorage("tts.previewText") private var previewText: String = "こんにちは。これはプレビューです。声と速度を確認できます。"
+    @State private var headYOffset: CGFloat = 0
+    @State private var fingerOffsetX: CGFloat = 0
+    @State private var fingerOffsetY: CGFloat = 0
+    @State private var showConfetti: Bool = false
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 20) {
-            // Left column: game UI
-            VStack(spacing: 20) {
-                Text(game.statusText)
-                    .font(.title2)
-                    .bold()
-                    .multilineTextAlignment(.center)
-                    .padding(.top)
+    // TTSQueue ensures a minimum pause between successive utterances.
+    private class TTSQueue: NSObject, AVSpeechSynthesizerDelegate {
+        let synthesizer = AVSpeechSynthesizer()
+        private var queue: [AVSpeechUtterance] = []
+        /// gap between utterances in seconds
+        var gap: TimeInterval = 1.0
 
-                HStack(alignment: .center, spacing: 40) {
-                    VStack(spacing: 12) {
-                        Text("あなた")
-                            .font(.headline)
-                        Image(systemName: symbolForHand(game.playerHand))
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 80, height: 80)
-                            .foregroundStyle(.blue)
-                        Text(game.playerHand?.rawValue ?? "-")
-                    }
+        override init() {
+            super.init()
+            synthesizer.delegate = self
+        }
 
-                    VStack(spacing: 12) {
-                        Text("CPU")
-                            .font(.headline)
-                                ZStack {
-                                    // Load local svg via simple WebView wrapper for vector display
-                                    SVGWebView(name: "cpu", width: 120, height: 120, triggerWin: showConfetti)
-                                        .frame(width: 120, height: 120)
-                                        .rotationEffect(.degrees(headRotation), anchor: .center)
-                                        .animation(.interpolatingSpring(stiffness: 200, damping: 8), value: headRotation)
-
-                                    // pointing finger indicator
-                                    if game.phase != .janken {
-                                        Image(systemName: "hand.point.right.fill")
-                                            .resizable()
-                                            .scaledToFit()
-                                            .frame(width: 36, height: 36)
-                                            .offset(x: fingerOffset)
-                                            .foregroundStyle(.red)
-                                            .animation(.easeInOut(duration: 0.25), value: fingerOffset)
-                                    }
-                                }
-                        Text(game.cpuHand?.rawValue ?? "-")
-                    }
-                }
-
-                if game.phase == .janken {
-                    HStack(spacing: 16) {
-                        ForEach(Janken.allCases) { hand in
-                            Button(action: {
-                                game.playJanken(player: hand)
-                                speak("じゃんけん\(hand.rawValue)！")
-                                // small animation
-                                withAnimation(.spring()) { fingerOffset = 0 }
-                            }) {
-                                VStack {
-                                    Text(hand.rawValue)
-                                        .font(.title2)
-                                        .bold()
-                                    Text(emojiForJanken(hand))
-                                        .font(.largeTitle)
-                                }
-                                .padding()
-                                .frame(minWidth: 90)
-                                .background(.ultraThinMaterial)
-                                .cornerRadius(12)
-                                .shadow(radius: 4)
-                            }
-                        }
-                    }
-                } else if game.phase == .pointing {
-                    HStack(spacing: 24) {
-                        Button(action: {
-                            withAnimation { fingerOffset = -40 }
-                            game.chooseDirection(.left)
-                            performAfterPointing()
-                        }) {
-                            Text("← 左")
-                                .font(.title3)
-                                .padding()
-                                .frame(minWidth: 120)
-                                .background(Color.green.opacity(0.2))
-                                .cornerRadius(10)
-                        }
-                        Button(action: {
-                            withAnimation { fingerOffset = 40 }
-                            game.chooseDirection(.right)
-                            performAfterPointing()
-                        }) {
-                            Text("右 →")
-                                .font(.title3)
-                                .padding()
-                                .frame(minWidth: 120)
-                                .background(Color.green.opacity(0.2))
-                                .cornerRadius(10)
-                        }
-                    }
+        func enqueue(text: String, voiceIdentifier: String?, rate: Float, pitch: Float) {
+            let utterance = AVSpeechUtterance(string: text)
+            if let id = voiceIdentifier, !id.isEmpty {
+                if id == "pretty_girl" {
+                    // keep default voice selection but ensure Japanese if available
+                    utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP") ?? AVSpeechSynthesisVoice.speechVoices().first
+                } else if let v = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.identifier == id }) {
+                    utterance.voice = v
                 } else {
-                    VStack(spacing: 12) {
-                        if game.statusText.contains("勝ち") { Text("🎉").font(.largeTitle) }
-                        Button("もう一度") {
-                            game.resetForNextRound()
-                            withAnimation { headRotation = 0; fingerOffset = 0; showConfetti = false }
-                            speak("じゃんけんをしてください")
-                        }
-                        .padding()
-                        .background(Color.orange.opacity(0.2))
-                        .cornerRadius(8)
-                    }
+                    utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP") ?? AVSpeechSynthesisVoice.speechVoices().first
                 }
-
-                Spacer()
-            }
-
-            // Right column: settings panel
-            VStack(alignment: .leading, spacing: 12) {
-                Text("設定")
-                    .font(.headline)
-                ttsSettingsView()
-                Spacer()
-            }
-            .frame(width: 320)
-            .padding()
-            .background(Color(.secondarySystemBackground))
-            .cornerRadius(12)
-        }
-        .padding()
-        .onAppear {
-            // populate available Japanese voice options (identifier:name)
-            let voices = AVSpeechSynthesisVoice.speechVoices()
-            let jaVoices = voices.filter { $0.language == "ja-JP" }
-            if jaVoices.isEmpty {
-                // fallback: include any voices with ja-JP or default
-                availableVoiceOptions = voices.map { "\($0.identifier)|\($0.name) (\($0.language))" }
             } else {
-                availableVoiceOptions = jaVoices.map { "\($0.identifier)|\($0.name)" }
+                utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP") ?? AVSpeechSynthesisVoice.speechVoices().first
             }
-            // pick a sensible default if still empty
-            if selectedVoiceIdentifier.isEmpty {
-                if let female = jaVoices.first(where: { v in
-                    let id = v.identifier.lowercased(); let name = v.name.lowercased()
-                    return id.contains("female") || name.contains("female") || id.contains("siri") || name.contains("yuka") || name.contains("yui") || name.contains("haru") || name.contains("kyoko")
-                }) {
-                    selectedVoiceIdentifier = female.identifier
-                } else if let first = jaVoices.first {
-                    selectedVoiceIdentifier = first.identifier
-                } else if let any = AVSpeechSynthesisVoice(language: "ja-JP") {
-                    selectedVoiceIdentifier = any.identifier
-                }
+            utterance.rate = rate
+            utterance.pitchMultiplier = pitch
+
+            queue.append(utterance)
+            if !synthesizer.isSpeaking && !synthesizer.isPaused {
+                speakNext()
             }
         }
-        .onChange(of: game.cpuDirection) { newDir in
-            guard let d = newDir else { return }
-            // rotate head toward direction
-            withAnimation(.easeOut(duration: 0.3)) {
-                headRotation = (d == .left) ? -30 : 30
-            }
+
+        func clearAndInterrupt() {
+            queue.removeAll()
+            synthesizer.stopSpeaking(at: .immediate)
         }
-        .onChange(of: game.phase) { p in
-                if p == .pointing {
-                    speak("あっちむいてほい")
-                } else if p == .deciding {
-                    if game.statusText.contains("勝ち") {
-                        speak("おめでとう、あなたの勝ちです")
-                        withAnimation { showConfetti = true }
-                        // reset the flag after short delay so next time it can trigger again
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { withAnimation { showConfetti = false } }
-                    } else if game.statusText.contains("負け") {
-                        speak("残念、あなたの負けです")
-                    }
-                }
+
+        private func speakNext() {
+            guard !queue.isEmpty else { return }
+            let u = queue.removeFirst()
+            synthesizer.speak(u)
+        }
+
+        func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap) { [weak self] in
+                self?.speakNext()
+            }
         }
     }
 
-    // TTS Settings UI: placed after main body logic so it's available in the view
+    private let tts = TTSQueue()
+    @State private var showTTSSettings: Bool = false
+    @State private var availableVoiceOptions: [String] = []
+    @AppStorage("tts.selectedVoiceIdentifier") private var selectedVoiceIdentifier: String = ""
+    @AppStorage("tts.rate") private var ttsRate: Double = 0.40
+    @AppStorage("tts.pitch") private var ttsPitch: Double = 1.0
+    @AppStorage("tts.previewText") private var previewText: String = "こんにちは。テストです。"
+
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+#endif
+    var body: some View {
+        Group { contentLayout() }
+            .onAppear { populateVoicesIfNeeded() }
+            .onChange(of: game.cpuDirection) { newDir in
+                guard let d = newDir else { return }
+                withAnimation(.easeOut(duration: 0.3)) {
+                    switch d {
+                    case .left:
+                        headRotation = -30; headYOffset = 0
+                    case .right:
+                        headRotation = 30; headYOffset = 0
+                    case .up:
+                        headRotation = 0; headYOffset = -18
+                    case .down:
+                        headRotation = 0; headYOffset = 18
+                    }
+                }
+            }
+            .onChange(of: game.phase) { p in
+                if p == .pointing {
+                    // Entering pointing phase: ensure the CPU's visible direction is cleared
+                    // and head is neutral until the player actually points.
+                    withAnimation { headRotation = 0; headYOffset = 0 }
+                    game.cpuDirection = nil
+                    // Speak the chant after a short pause so the user has time to register the result
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        if game.phase == .pointing { speak("あっちむいてほい") }
+                    }
+                }
+                else if p == .deciding {
+                    if game.statusText.contains("勝ち") {
+                        // Slightly longer delay before the celebratory message so animation and pointing settle
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            speak("おめでとう、あなたの勝ちです")
+                            withAnimation { showConfetti = true }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { withAnimation { showConfetti = false } }
+                        }
+                    } else if game.statusText.contains("負け") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { speak("残念、あなたの負けです") }
+                    }
+                }
+            }
+    }
+
+    /// Return the preferred CPU character SVG name. If a `cpu_female.svg` exists in Resources,
+    /// prefer that; otherwise fall back to `cpu.svg`.
+    private func cpuCharacterName() -> String {
+        // Try both the 'Resources' subdirectory (if project kept that) and the bundle root
+        if Bundle.main.path(forResource: "cpu_female", ofType: "svg", inDirectory: "Resources") != nil {
+            return "cpu_female"
+        }
+        if Bundle.main.path(forResource: "cpu_female", ofType: "svg") != nil {
+            return "cpu_female"
+        }
+        return "cpu"
+    }
     @ViewBuilder
-    private func ttsSettingsView() -> some View {
+    private func contentLayout() -> some View {
+#if os(iOS)
+        let isiPhone = UIDevice.current.userInterfaceIdiom == .phone
+        if isiPhone || horizontalSizeClass == .compact {
+            ScrollView { VStack(spacing: 20) { gameMainView(); ttsPanelCompact() }.padding() }
+        } else {
+            HStack(alignment: .top, spacing: 20) { gameMainView(); ttsPanelWide() }.padding()
+        }
+#else
+        HStack(alignment: .top, spacing: 20) { gameMainView(); ttsPanelWide(isMac: true) }.padding()
+#endif
+    }
+
+    private func ttsPanelWide(isMac: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Spacer()
+            // Score is placed lower in the panel, directly above the settings header
+            HStack(spacing: 24) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("あなた").font(.caption)
+                    Text("\(game.playerScore)").font(.title2).bold()
+                }
+                Divider().frame(height: 28)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("CPU").font(.caption2)
+                    Text("\(game.cpuScore)").font(.headline).bold()
+                }
+            }
+            Text("設定").font(.headline)
+            ttsSettingsView()
+            Spacer()
+        }
+        .frame(width: 320)
+        .padding()
+#if os(macOS)
+        .background(Color(NSColor.windowBackgroundColor))
+#else
+        .background(Color(.secondarySystemBackground))
+#endif
+        .cornerRadius(12)
+    }
+
+    @ViewBuilder
+    func ttsPanelCompact() -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Spacer()
+            HStack(spacing: 24) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("あなた").font(.caption)
+                    HStack(spacing: 6) {
+                        Button(action: {
+                            game.resetForNextRound(); game.resetScores(); withAnimation { headRotation = 0; fingerOffsetX = 0; fingerOffsetY = 0; showConfetti = false }
+                            speak("スコアをリセットしました。じゃんけんをしてください")
+                        }) {
+                            Image(systemName: "arrow.counterclockwise.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .imageScale(.large)
+                        .accessibilityLabel("スコアをリセット")
+
+                        Text("\(game.playerScore)").font(.title2).bold()
+                    }
+                }
+                Divider().frame(height: 28)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("CPU").font(.caption)
+                    Text("\(game.cpuScore)").font(.title2).bold()
+                }
+                Spacer()
+                Button(action: {
+                    game.resetForNextRound(); game.resetScores(); withAnimation { headRotation = 0; fingerOffsetX = 0; fingerOffsetY = 0; showConfetti = false }
+                    speak("スコアをリセットしました。じゃんけんをしてください")
+                }) {
+                    Image(systemName: "arrow.counterclockwise.circle")
+                }
+                .buttonStyle(.plain)
+                .imageScale(.medium)
+                .accessibilityLabel("スコアをリセット")
+            }
+            Spacer().frame(height: 8)
+            Text("設定").font(.headline)
+            ttsSettingsView()
+            Spacer()
+        }
+        .padding()
+        #if os(macOS)
+        .background(Color(NSColor.windowBackgroundColor))
+        #else
+        .background(Color(.secondarySystemBackground))
+        #endif
+        .cornerRadius(12)
+    }
+
+    func populateVoicesIfNeeded() {
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        let jaVoices = voices.filter { $0.language == "ja-JP" }
+        availableVoiceOptions = jaVoices.isEmpty ? voices.map { "\($0.identifier)|\($0.name) (\($0.language))" } : jaVoices.map { "\($0.identifier)|\($0.name)" }
+        // Insert synthetic "Pretty Girl" option at the top of the picker list
+        availableVoiceOptions.insert("pretty_girl|Pretty Girl", at: 0)
+        if selectedVoiceIdentifier.isEmpty {
+            if let female = jaVoices.first(where: { v in
+                let id = v.identifier.lowercased(); let name = v.name.lowercased()
+                return id.contains("female") || name.contains("female") || id.contains("siri") || name.contains("yuka") || name.contains("yui") || name.contains("haru") || name.contains("kyoko") || name.contains("sakura") || name.contains("ai")
+            }) { selectedVoiceIdentifier = female.identifier }
+            else if let first = jaVoices.first { selectedVoiceIdentifier = first.identifier }
+            else if let any = AVSpeechSynthesisVoice(language: "ja-JP") { selectedVoiceIdentifier = any.identifier }
+        }
+    }
+
+    /// Apply a preset that aims to sound like a "cute girl" voice.
+    func applyCuteVoice() {
+        // Keep for compatibility; selecting "Pretty Girl" from the picker will apply the same logic
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        let keywords = ["female","yui","yuka","kyoko","sakura","ai","haru","saki","yuri","mai","miku","nanami","akari","hina","yuna","mio","sora"]
+        func matches(_ v: AVSpeechSynthesisVoice) -> Bool {
+            guard v.language == "ja-JP" else { return false }
+            let id = v.identifier.lowercased()
+            let name = v.name.lowercased()
+            for k in keywords { if id.contains(k) || name.contains(k) { return true } }
+            return false
+        }
+        let candidates = voices.filter { matches($0) }
+        let pick = candidates.first ?? voices.first(where: { $0.language == "ja-JP" }) ?? voices.first
+        if let pick = pick {
+            // Set presets and use the picked voice for preview. Do not overwrite the logical selection if user chose "Pretty Girl".
+            selectedVoiceIdentifier = pick.identifier
+            // Use a slightly slower rate to avoid sounding too fast
+            ttsRate = 0.42
+            ttsPitch = 1.35
+            speak("こんにちは、ゆいです。可愛い声のテストをします。よろしくね。")
+        }
+    }
+
+    @ViewBuilder
+    func ttsSettingsView() -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle("TTS 設定を表示", isOn: $showTTSSettings)
             if showTTSSettings {
@@ -285,9 +401,7 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("声を選択:")
                         Picker(selection: $selectedVoiceIdentifier, label: Text("Voice")) {
-                            ForEach(availableVoiceOptions, id: \.
-                                self) { entry in
-                                // entry format: identifier|name or identifier|name (lang)
+                            ForEach(availableVoiceOptions, id: \.self) { entry in
                                 let parts = entry.split(separator: "|")
                                 let id = String(parts.first ?? "")
                                 let label = parts.count > 1 ? String(parts[1]) : id
@@ -295,37 +409,30 @@ struct ContentView: View {
                             }
                         }
                         .pickerStyle(MenuPickerStyle())
-
-                        HStack {
-                            Text("速度")
-                            Slider(value: $ttsRate, in: 0.3...0.7, step: 0.01)
-                            Text(String(format: "%.2f", ttsRate))
-                                .frame(width: 48, alignment: .trailing)
-                        }
-
-                        HStack {
-                            Text("ピッチ")
-                            Slider(value: $ttsPitch, in: 0.5...2.0, step: 0.01)
-                            Text(String(format: "%.2f", ttsPitch))
-                                .frame(width: 48, alignment: .trailing)
-                        }
-
-                        // Editable preview text
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("プレビューテキスト")
-                            TextField("プレビュー文を入力", text: $previewText)
-                                .textFieldStyle(.roundedBorder)
-                        }
-
-                        // Preview button
-                        HStack {
-                            Spacer()
-                            Button(action: {
-                                speak(previewText)
-                            }) {
-                                Label("プレビュー再生", systemImage: "play.fill")
+                        .onChange(of: selectedVoiceIdentifier) { newValue in
+                            if newValue == "pretty_girl" {
+                                // Apply cute voice preset programmatically
+                                // This will choose a good candidate and set rate/pitch
+                                applyCuteVoice()
                             }
-                            .buttonStyle(.borderedProminent)
+                        }
+
+                        HStack { Text("速度"); Slider(value: $ttsRate, in: 0.3...0.7, step: 0.01); Text(String(format: "%.2f", ttsRate)).frame(width: 48, alignment: .trailing) }
+                        HStack { Text("ピッチ"); Slider(value: $ttsPitch, in: 0.5...2.0, step: 0.01); Text(String(format: "%.2f", ttsPitch)).frame(width: 48, alignment: .trailing) }
+
+                        VStack(alignment: .leading, spacing: 6) { Text("プレビューテキスト"); TextField("プレビュー文を入力", text: $previewText).textFieldStyle(.roundedBorder) }
+
+                        HStack(spacing: 10) {
+                            // The "Pretty Girl" option is now available in the picker; the separate button was removed to avoid duplication.
+                            Button(action: {
+                                // Debug: print available voices to console for inspection
+                                let vs = AVSpeechSynthesisVoice.speechVoices()
+                                for v in vs {
+                                    print("VOICE: id=\(v.identifier) name=\(v.name) lang=\(v.language)")
+                                }
+                            }) { Text("ボイス一覧を出力") }.buttonStyle(.bordered)
+                            Spacer()
+                            Button(action: { speak(previewText) }) { Label("プレビュー再生", systemImage: "play.fill") }.buttonStyle(.borderedProminent)
                         }
                     }
                     .padding(.vertical, 6)
@@ -336,104 +443,180 @@ struct ContentView: View {
     }
 
     func performAfterPointing() {
-        // speak short phrase and apply small delay to show head rotation
-        speak("あっちむいてほい！")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            // keep rotation for a bit then reset conditionally
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                if game.phase == .deciding {
-                    // leave result displayed
-                } else {
-                    withAnimation { headRotation = 0; fingerOffset = 0 }
-                }
+        // Allow a short moment for the pointing animation/chant to play, then reset head/finger if no decision reached
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if game.phase != .deciding {
+                withAnimation { headRotation = 0; headYOffset = 0; fingerOffsetX = 0; fingerOffsetY = 0 }
             }
         }
     }
 
     func speak(_ text: String) {
-        let utterance = AVSpeechUtterance(string: text)
-
-        // Use selected voice if available
-        if !selectedVoiceIdentifier.isEmpty {
-            if let voice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.identifier == selectedVoiceIdentifier }) {
-                utterance.voice = voice
-            } else if let voice = AVSpeechSynthesisVoice(language: "ja-JP") {
-                utterance.voice = voice
-            }
-        } else {
-            if let voice = AVSpeechSynthesisVoice(language: "ja-JP") {
-                utterance.voice = voice
-            }
-        }
-
-        // Apply rate and pitch from UI
-        utterance.rate = Float(ttsRate)
-        utterance.pitchMultiplier = Float(ttsPitch)
-
-        tts.stopSpeaking(at: .immediate)
-        tts.speak(utterance)
+        // Route all speak requests through the TTS queue so there's a consistent gap between narrations.
+        tts.enqueue(text: text, voiceIdentifier: selectedVoiceIdentifier, rate: Float(ttsRate), pitch: Float(ttsPitch))
     }
 
     func symbolForHand(_ hand: Janken?) -> String {
-        // Prefer SF Symbols on platforms that support them; on macOS, verify symbol exists and fallback to emoji
         func symbolName(for h: Janken) -> String {
-            switch h {
-            case .gu: return "hand.rock.fill"
-            case .choki: return "hand.scissors.fill"
-            case .pa: return "hand.paper.fill"
-            }
+            switch h { case .gu: return "hand.rock.fill"; case .choki: return "hand.scissors.fill"; case .pa: return "hand.paper.fill" }
         }
-
         if let h = hand {
-#if os(macOS)
-            // check if system symbol exists (available on macOS 11+ via NSImage)
+            #if os(macOS)
             let name = symbolName(for: h)
             if #available(macOS 11.0, *) {
-                if NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil {
-                    return name
-                } else {
-                    // fallback to emoji for macOS when symbol not available
-                    switch h {
-                    case .gu: return "✊"
-                    case .choki: return "✌️"
-                    case .pa: return "🖐️"
-                    }
-                }
+                if NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil { return name }
+                switch h { case .gu: return "✊"; case .choki: return "✌️"; case .pa: return "🖐️" }
             } else {
-                switch h {
-                case .gu: return "✊"
-                case .choki: return "✌️"
-                case .pa: return "🖐️"
-                }
+                switch h { case .gu: return "✊"; case .choki: return "✌️"; case .pa: return "🖐️" }
             }
-#else
+            #else
             return symbolName(for: h)
-#endif
+            #endif
         }
-
         return "hand.raised.fill"
     }
 
-    func emojiForJanken(_ hand: Janken) -> String {
-        switch hand {
-        case .gu: return "✊"
-        case .choki: return "✌️"
-        case .pa: return "🖐️"
+    @ViewBuilder
+    func gameMainView() -> some View {
+        VStack(spacing: 20) {
+            // Top bar left intentionally empty; reset button moved next to scores in the settings panel
+            Text(game.statusText).font(.title2).bold().multilineTextAlignment(.center)
+
+            let playerView = VStack(spacing: 12) {
+                Text("あなた").font(.headline)
+                if game.phase != .pointing {
+                    Image(systemName: symbolForHand(game.playerHand)).resizable().scaledToFit().frame(width: 80, height: 80)
+#if os(iOS)
+                    .foregroundStyle(.blue)
+#else
+                    .foregroundColor(.blue)
+#endif
+                    Text(game.playerHand?.rawValue ?? "-")
+                } else {
+                    // Keep layout stable while hiding the hand during pointing phase
+                    Rectangle().fill(Color.clear).frame(width: 80, height: 80)
+                }
+            }
+
+            let cpuView = VStack(spacing: 12) {
+                Text("CPU").font(.headline)
+                ZStack {
+                    SVGWebView(name: cpuCharacterName(), width: 120, height: 120, triggerWin: showConfetti)
+                        .frame(width: 120, height: 120)
+                        .rotationEffect(.degrees(headRotation), anchor: .center)
+                        .offset(y: headYOffset)
+                        .animation(.interpolatingSpring(stiffness: 200, damping: 8), value: headRotation)
+
+                    // CPU finger overlay removed per UX request.
+
+                    // Show the CPU's chosen direction as a label when it's revealed
+                    if let dir = game.cpuDirection {
+                        VStack {
+                            Text(dir.rawValue)
+                                .font(.title)
+                                .bold()
+                                .padding(8)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(8)
+                                .shadow(radius: 4)
+                                .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
+                            Spacer()
+                        }
+                        .frame(width: 120, height: 120)
+                        .animation(.easeOut(duration: 0.25), value: game.cpuDirection)
+                    }
+                }
+                if game.phase != .pointing {
+                    Text(game.cpuHand?.rawValue ?? "-")
+                } else {
+                    // Maintain spacing so layout doesn't jump
+                    Text("")
+                        .frame(height: 18)
+                }
+            }
+
+            HStack(alignment: .center, spacing: 40) { playerView; cpuView }
+
+            if game.phase == .janken {
+                HStack(spacing: 16) {
+                    ForEach(Janken.allCases) { hand in
+                        Button(action: {
+                            // Chant: speak first phrase, wait 2s, then speak punchline and evaluate
+                            speak("最初はグー")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                speak("じゃんけんぽん")
+                                // small buffer then evaluate
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                        game.playJanken(player: hand)
+                                        // If tie, announce and reset to janken
+                                        if game.playerHand == game.cpuHand {
+                                            // small delay to avoid cutting off the previous utterance
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                                                speak("あいこでしょ")
+                                                game.phase = .janken
+                                                game.statusText = "あいこ！もう一度"
+                                            }
+                                        } else {
+                                            // Do not speak the specific hand after じゃんけんぽん — keep only the chant.
+                                        }
+                                        withAnimation(.spring()) { fingerOffsetX = 0; fingerOffsetY = 0 }
+                                    }
+                            }
+                        }) {
+                            VStack { Text(hand.rawValue).font(.title2).bold(); Text(emojiForJanken(hand)).font(.largeTitle) }
+                                .padding().frame(minWidth: 90).background(.ultraThinMaterial).cornerRadius(12).shadow(radius: 4)
+                        }
+                        .disabled(game.isLocked)
+                    }
+                }
+            } else if game.phase == .pointing {
+                VStack(spacing: 12) {
+                    HStack(spacing: 16) {
+                        Button(action: { withAnimation { fingerOffsetX = 0; fingerOffsetY = -48 }; game.chooseDirection(.up); performAfterPointing() }) {
+                            Text("↑ 上").font(.title3).padding().frame(minWidth: 120).background(Color.green.opacity(0.2)).cornerRadius(10)
+                        }
+                        .disabled(game.isLocked)
+                        Button(action: { withAnimation { fingerOffsetX = -48; fingerOffsetY = 0 }; game.chooseDirection(.left); performAfterPointing() }) {
+                            Text("← 左").font(.title3).padding().frame(minWidth: 120).background(Color.green.opacity(0.2)).cornerRadius(10)
+                        }
+                        .disabled(game.isLocked)
+                    }
+                    HStack(spacing: 16) {
+                        Button(action: { withAnimation { fingerOffsetX = 48; fingerOffsetY = 0 }; game.chooseDirection(.right); performAfterPointing() }) {
+                            Text("右 →").font(.title3).padding().frame(minWidth: 120).background(Color.green.opacity(0.2)).cornerRadius(10)
+                        }
+                        .disabled(game.isLocked)
+                        Button(action: { withAnimation { fingerOffsetX = 0; fingerOffsetY = 48 }; game.chooseDirection(.down); performAfterPointing() }) {
+                            Text("↓ 下").font(.title3).padding().frame(minWidth: 120).background(Color.green.opacity(0.2)).cornerRadius(10)
+                        }
+                        .disabled(game.isLocked)
+                    }
+                }
+            } else {
+                VStack(spacing: 12) {
+                    if game.statusText.contains("勝ち") { Text("🎉").font(.largeTitle) }
+                        Button("もう一度") {
+                        game.resetForNextRound()
+                        withAnimation { headRotation = 0; fingerOffsetX = 0; fingerOffsetY = 0; showConfetti = false }
+                        speak("じゃんけんをしてください")
+                    }
+                    .padding().background(Color.orange.opacity(0.2)).cornerRadius(8)
+                }
+            }
+
+            Spacer()
         }
     }
+
+    func emojiForJanken(_ hand: Janken) -> String { switch hand { case .gu: return "✊"; case .choki: return "✌️"; case .pa: return "🖐️" } }
+
 }
 
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
-    }
-}
+struct ContentView_Previews: PreviewProvider { static var previews: some View { ContentView() } }
 
-import WebKit
-
+// MARK: - SVGWebView implementations
 #if os(iOS)
-import UIKit
-
+// UIKit is already imported at file scope when needed; UIViewRepresentable implementation follows
 struct SVGWebView: UIViewRepresentable {
     let name: String
     let width: CGFloat
@@ -454,12 +637,14 @@ struct SVGWebView: UIViewRepresentable {
     }
 
     private func load(svgInto uiView: WKWebView) {
-        if let file = Bundle.main.path(forResource: name, ofType: "svg", inDirectory: "Resources") {
-            do {
-                let svg = try String(contentsOfFile: file, encoding: .utf8)
+        // Try Resources subdirectory first, then bundle root
+        var filePath: String? = Bundle.main.path(forResource: name, ofType: "svg", inDirectory: "Resources")
+        if filePath == nil { filePath = Bundle.main.path(forResource: name, ofType: "svg") }
+        if let file = filePath {
+            if let svg = try? String(contentsOfFile: file, encoding: .utf8) {
                 let wrapped = makeWrappedHTML(with: svg)
                 uiView.loadHTMLString(wrapped, baseURL: nil)
-            } catch { }
+            }
         }
     }
 
@@ -517,8 +702,7 @@ struct SVGWebView: UIViewRepresentable {
 }
 
 #elseif os(macOS)
-import AppKit
-
+// AppKit is already imported at file scope when needed; NSViewRepresentable implementation follows
 struct SVGWebView: NSViewRepresentable {
     let name: String
     let width: CGFloat
@@ -527,7 +711,6 @@ struct SVGWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let web = WKWebView(frame: .zero)
-        // make background transparent on macOS
         web.setValue(false, forKey: "drawsBackground")
         return web
     }
@@ -538,12 +721,14 @@ struct SVGWebView: NSViewRepresentable {
     }
 
     private func load(svgInto uiView: WKWebView) {
-        if let file = Bundle.main.path(forResource: name, ofType: "svg", inDirectory: "Resources") {
-            do {
-                let svg = try String(contentsOfFile: file, encoding: .utf8)
+        // Try Resources subdirectory first, then bundle root
+        var filePath: String? = Bundle.main.path(forResource: name, ofType: "svg", inDirectory: "Resources")
+        if filePath == nil { filePath = Bundle.main.path(forResource: name, ofType: "svg") }
+        if let file = filePath {
+            if let svg = try? String(contentsOfFile: file, encoding: .utf8) {
                 let wrapped = makeWrappedHTML(with: svg)
                 uiView.loadHTMLString(wrapped, baseURL: nil)
-            } catch { }
+            }
         }
     }
 
@@ -600,5 +785,6 @@ struct SVGWebView: NSViewRepresentable {
     }
 }
 
+ 
 #endif
 
