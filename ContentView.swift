@@ -188,8 +188,12 @@ struct ContentView: View {
         }
 
         nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap) { [weak self] in
-                self?.speakNext()
+            Task { @MainActor in
+                // Safely read the main-isolated gap value and await before proceeding
+                let g = gap
+                let ns = UInt64((g) * 1_000_000_000)
+                if ns > 0 { await Task.sleep(ns) }
+                self.speakNext()
             }
         }
     }
