@@ -137,8 +137,11 @@ struct ContentView: View {
     @State private var fingerOffsetX: CGFloat = 0
     @State private var fingerOffsetY: CGFloat = 0
     @State private var showConfetti: Bool = false
+    // Subtle breathing/idle animation state for raster character
+    @State private var breathe: Bool = false
 
     // TTSQueue ensures a minimum pause between successive utterances.
+    @MainActor
     private class TTSQueue: NSObject, AVSpeechSynthesizerDelegate {
         let synthesizer = AVSpeechSynthesizer()
         private var queue: [AVSpeechUtterance] = []
@@ -204,7 +207,11 @@ struct ContentView: View {
 #endif
     var body: some View {
         Group { contentLayout() }
-            .onAppear { populateVoicesIfNeeded() }
+            .onAppear {
+                populateVoicesIfNeeded()
+                // kick off idle breathing animation for raster images
+                DispatchQueue.main.async { breathe = true }
+            }
             .onChange(of: game.cpuDirection) { newDir in
                 guard let d = newDir else { return }
                 withAnimation(.easeOut(duration: 0.3)) {
@@ -235,9 +242,17 @@ struct ContentView: View {
                     if game.statusText.contains("勝ち") {
                         // Slightly longer delay before the celebratory message so animation and pointing settle
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            // Temporarily stop subtle breathing and pulse on win
+                            breathe = false
                             speak("おめでとう、あなたの勝ちです")
-                            withAnimation { showConfetti = true }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { withAnimation { showConfetti = false } }
+                            withAnimation {
+                                showConfetti = true
+                            }
+                            // After confetti, hide and resume breathing
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                                withAnimation { showConfetti = false }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { breathe = true }
+                            }
                         }
                     } else if game.statusText.contains("負け") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { speak("残念、あなたの負けです") }
@@ -501,11 +516,41 @@ struct ContentView: View {
             let cpuView = VStack(spacing: 12) {
                 Text("CPU").font(.headline)
                 ZStack {
-                    SVGWebView(name: cpuCharacterName(), width: 120, height: 120, triggerWin: showConfetti)
-                        .frame(width: 120, height: 120)
-                        .rotationEffect(.degrees(headRotation), anchor: .center)
-                        .offset(y: headYOffset)
-                        .animation(.interpolatingSpring(stiffness: 200, damping: 8), value: headRotation)
+                    Group {
+                        // Prefer raster asset if provided in Assets.xcassets or Resources
+                        if UIImage(named: "cpu_female") != nil || Bundle.main.path(forResource: "cpu_female", ofType: "png") != nil {
+                            Image("cpu_female")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 120, height: 120)
+                                // idle breathing combined with win pulse
+                                .scaleEffect((showConfetti ? 1.15 : 1.0) * (breathe ? 1.02 : 0.98))
+                                .offset(x: fingerOffsetX / 8, y: headYOffset + (breathe ? -4 : 0))
+                                .rotationEffect(.degrees(headRotation), anchor: .center)
+                                .animation(.interpolatingSpring(stiffness: 200, damping: 8), value: headRotation)
+                                .animation(Animation.easeInOut(duration: 3.6).repeatForever(autoreverses: true), value: breathe)
+                                .animation(.spring(), value: showConfetti)
+                        } else if UIImage(named: "cpu") != nil || Bundle.main.path(forResource: "cpu", ofType: "png") != nil {
+                            Image("cpu")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 120, height: 120)
+                                .scaleEffect((showConfetti ? 1.15 : 1.0) * (breathe ? 1.02 : 0.98))
+                                .offset(x: fingerOffsetX / 8, y: headYOffset + (breathe ? -4 : 0))
+                                .rotationEffect(.degrees(headRotation), anchor: .center)
+                                .animation(.interpolatingSpring(stiffness: 200, damping: 8), value: headRotation)
+                                .animation(Animation.easeInOut(duration: 3.6).repeatForever(autoreverses: true), value: breathe)
+                                .animation(.spring(), value: showConfetti)
+                        } else {
+                            SVGWebView(name: cpuCharacterName(), width: 120, height: 120, triggerWin: showConfetti)
+                                .frame(width: 120, height: 120)
+                                .scaleEffect(showConfetti ? 1.12 : 1.0)
+                                .offset(x: fingerOffsetX / 8, y: headYOffset)
+                                .rotationEffect(.degrees(headRotation), anchor: .center)
+                                .animation(.interpolatingSpring(stiffness: 200, damping: 8), value: headRotation)
+                                .animation(.spring(), value: showConfetti)
+                        }
+                    }
 
                     // CPU finger overlay removed per UX request.
 
